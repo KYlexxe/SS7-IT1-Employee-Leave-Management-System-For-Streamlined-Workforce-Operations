@@ -1,0 +1,11 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Export Database",
+            "type": "shell",
+            "command": "mysqldump -u mariadb -pmariadb mariadb > /workspaces/${REPO_NAME}/database_export.sql",
+            "problemMatcher": []
+        }
+    ]
+}

@@ -1,0 +1,26 @@
+{
+    "name": "ICI IT Codespace PHP/MySQL/phpMyAdmin by jerickalmeda",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/docker-in-docker:1": {}
+    },
+    "postCreateCommand": "chmod +x /workspaces/${localWorkspaceFolderBasename}/startup.sh",
+    "postStartCommand": "/workspaces/${localWorkspaceFolderBasename}/startup.sh",
+    "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash"
+    },
+    "extensions": [
+        "ms-azuretools.vscode-docker",
+        "felixfbecker.php-debug",
+        "bmewburn.vscode-intelephense-client",
+        "ms-vsliveshare.vsliveshare",
+        "GitHub.copilot"
+    ],
+    "forwardPorts": [80],
+    "remoteEnv": {
+        "REPO_NAME": "${localWorkspaceFolderBasename}"
+    }
+}
