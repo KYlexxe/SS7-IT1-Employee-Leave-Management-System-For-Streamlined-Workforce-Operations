@@ -50,6 +50,7 @@ nav ul li a:hover {
     color: #f4f7fc;
 }
 
+
 /* Container */
 .container {
     width: 90%;
@@ -166,5 +167,21 @@ footer {
     .form-container {
         width: 90%;
     }
+}
+
+}
+.summary {
+    font-style: italic;
+    margin-top: 10px;
+}
+.actions a {
+    margin-right: 8px;
+}
+.no-balance {
+    color: #999;
+}
+.zero {
+    color: red;
+    font-weight: bold;
 }
 
