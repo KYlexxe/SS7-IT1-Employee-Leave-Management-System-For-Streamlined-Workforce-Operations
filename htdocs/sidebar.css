@@ -1,0 +1,29 @@
+body {
+    transition: background 0.3s, color 0.3s;
+}
+.dark-mode {
+    background-color: #121212;
+    color: #ffffff;
+}
+.sidebar {
+    min-height: 100vh;
+    background: #343a40;
+    color: white;
+}
+.sidebar a {
+    color: white;
+    text-decoration: none;
+    padding: 10px;
+    display: block;
+}
+.sidebar a:hover {
+    background: #495057;
+}
+.card {
+    background: #ffffff;
+    transition: background 0.3s, color 0.3s;
+}
+.dark-mode .card {
+    background: #1e1e1e;
+    color: #ffffff;
+}

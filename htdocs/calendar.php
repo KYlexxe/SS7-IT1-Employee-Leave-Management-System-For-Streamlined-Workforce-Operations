@@ -1,32 +1,39 @@
 <?php
-include 'dbconnect.php'; 
-ini_set('display_errors', 1);
+
 error_reporting(E_ALL);
+ini_set('display_errors', 1);
+session_start();
+include 'dbconnect.php'; 
+
+if (!isset($_SESSION['user_id']) || strtolower($_SESSION['role']) != 'admin') {
+    header("Location: login.php");
+    exit();
+}
 
 // Get current month and year from user input or default to current
 $month = isset($_GET['month']) ? (int)$_GET['month'] : date('n');
 $year = isset($_GET['year']) ? (int)$_GET['year'] : date('Y');
 
-// Fetch leave data
-$query = "SELECT e.Name, l.StartDate, l.EndDate, l.leave_type 
-          FROM leaverequest l 
-          JOIN employee e ON l.EmployeeID = e.EmployeeID";
+// Fetch leave data (only approved requests)
+$query = "
+    SELECT e.Name, l.StartDate, l.EndDate, lt.LeaveName 
+    FROM leaverequest l 
+    JOIN employee e ON l.EmployeeID = e.EmployeeID 
+    JOIN leavetypes lt ON l.leave_type = lt.LeaveTypeID 
+    WHERE l.Status = 'Approved'
+";
 
-$result = mysqli_query($conn, $query);
-if (!$result) {
-    die("Query Error: " . mysqli_error($conn));
-}
-
+$result = $conn->query($query);
 $leaveData = [];
-while ($row = mysqli_fetch_assoc($result)) {
+while ($row = $result->fetch_assoc()) {
     $name = $row['Name'];
-    $leaveType = $row['leave_type'];
+    $leaveType = $row['LeaveName'];
     $start = strtotime($row['StartDate']);
     $end = strtotime($row['EndDate']);
 
     for ($date = $start; $date <= $end; $date += 86400) {
         $formattedDate = date('Y-m-d', $date);
-        $leaveData[$formattedDate]["$name - $leaveType"] = true;
+        $leaveData[$formattedDate][] = "$name - $leaveType";
     }
 }
 
@@ -36,92 +43,79 @@ function buildCalendar($month, $year, $leaveData) {
     $totalDays = date('t', $firstDay);
     $startDay = date('N', $firstDay);
 
-    echo "<table style='width: 100%; border-collapse: collapse; text-align: center;'>";
-    echo "<tr>";
+    echo "<table class='table table-bordered text-center'>";
+    echo "<thead class='table-dark'><tr>";
     foreach ($daysOfWeek as $day) {
-        echo "<th style='background: #007BFF; color: white; padding: 10px; border: 1px solid #ddd;'>$day</th>";
+        echo "<th>$day</th>";
     }
-    echo "</tr><tr>";
+    echo "</tr></thead><tbody><tr>";
 
     for ($i = 1; $i < $startDay; $i++) {
-        echo "<td style='background: #f4f4f4; border: 1px solid #ddd;'></td>";
+        echo "<td class='bg-light'></td>";
     }
 
     for ($day = 1; $day <= $totalDays; $day++) {
         $currentDate = date('Y-m-d', mktime(0, 0, 0, $month, $day, $year));
-        $isLeaveDay = isset($leaveData[$currentDate]) ? "background: #ffebeb;" : "";
+        $isLeaveDay = isset($leaveData[$currentDate]) ? "table-danger" : "";
 
-        echo "<td style='border: 1px solid #ddd; padding: 10px; height: 80px; vertical-align: top; $isLeaveDay'>";
-        echo "<strong>$day</strong>";
+        echo "<td class='$isLeaveDay'><strong>$day</strong>";
 
         if (isset($leaveData[$currentDate])) {
-            echo "<div style='margin-top: 5px; font-size: 12px; color: #d9534f; text-align: left;'>";
-            foreach (array_keys($leaveData[$currentDate]) as $info) {
-                echo "<div style='padding: 3px; background: #f8d7da; border-radius: 5px; margin: 2px 0;'>$info</div>";
+            echo "<ul class='list-unstyled mt-1 text-start'>";
+            foreach ($leaveData[$currentDate] as $info) {
+                echo "<li class='badge bg-warning text-dark d-block mb-1'>$info</li>";
             }
-            echo "</div>";
+            echo "</ul>";
         }
-
         echo "</td>";
 
         if (date('N', mktime(0, 0, 0, $month, $day, $year)) == 7) {
             echo "</tr><tr>";
         }
     }
-
-    echo "</tr></table>";
+    echo "</tr></tbody></table>";
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Leave Calendar</title>
-    <link rel="stylesheet" href="calendar.css"> <!-- External CSS Linked -->
+    <link rel="stylesheet" href="sidebar.css">
+    
+    <link rel="stylesheet" href="bootstrap1.css">
 </head>
-<body style="font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0;">
-
-<!-- Sidebar -->
-<div class="sidebar">
-    <h2>Approved Calendar</h2>
-    <ul>
-        <li><a href="admin.php">Dashboard</a></li>
-        <li><a href="employee.php">Employees</a></li>
-        <li><a href="leavetypes.php">Leave Types</a></li>
-        <li><a href="reports.php">Reports</a></li>
-        <li><a href="auditlog.php">Audit Log</a></li>
-        <li><a href="calendar.php">Calendar</a></li>
-        <li><a href="logout.php">Logout</a></li>
-    </ul>
-</div>
-
-<!-- Main Content -->
-<div class="content">
-    <div class="calendar-container">
-        <div class="nav-links">
-            <a href="?month=<?= $month == 1 ? 12 : $month - 1 ?>&year=<?= $month == 1 ? $year - 1 : $year ?>">&lt; Prev</a>
-            <h2><?= date('F Y', mktime(0, 0, 0, $month, 1, $year)) ?></h2>
-            <a href="?month=<?= $month == 12 ? 1 : $month + 1 ?>&year=<?= $month == 12 ? $year + 1 : $year ?>">Next &gt;</a>
+<body>
+    
+    <?php include 'sidebar.php'; ?>
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0"><i class="fas fa-calendar-alt"></i> Approved Leave Calendar</h2>
         </div>
 
-        <form method="GET">
-            <select name="month">
+        <div class="d-flex justify-content-between mb-3">
+            <a href="?month=<?= $month == 1 ? 12 : $month - 1 ?>&year=<?= $month == 1 ? $year - 1 : $year ?>" class="btn btn-primary">&lt; Prev</a>
+            <h3><?= date('F Y', mktime(0, 0, 0, $month, 1, $year)) ?></h3>
+            <a href="?month=<?= $month == 12 ? 1 : $month + 1 ?>&year=<?= $month == 12 ? $year + 1 : $year ?>" class="btn btn-primary">Next &gt;</a>
+        </div>
+
+        <form method="GET" class="mb-3 d-flex gap-2">
+            <select name="month" class="form-select">
                 <?php for ($m = 1; $m <= 12; $m++): ?>
                     <option value="<?= $m ?>" <?= $m == $month ? 'selected' : '' ?>><?= date('F', mktime(0, 0, 0, $m, 1)) ?></option>
                 <?php endfor; ?>
             </select>
-            <select name="year">
+            <select name="year" class="form-select">
                 <?php for ($y = date('Y') - 2; $y <= date('Y') + 2; $y++): ?>
                     <option value="<?= $y ?>" <?= $y == $year ? 'selected' : '' ?>><?= $y ?></option>
                 <?php endfor; ?>
             </select>
-            <button type="submit">Go</button>
+            <button type="submit" class="btn btn-success">Go</button>
         </form>
 
         <?php buildCalendar($month, $year, $leaveData); ?>
     </div>
-</div>
-
 </body>
 </html>

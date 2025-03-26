@@ -1,220 +1,142 @@
-<?php  
-include 'dbconnect.php'; // Ensure the database connection is correct
+<?php
+include 'dbconnect.php';
 session_start();
-
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
-// Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
-    echo "User not logged in.";
+    header("Location: login.php");
     exit();
 }
 
 $user_id = $_SESSION['user_id'];
-$error_message = ""; // Variable to hold any error/warning messages
+$error_message = "";
 
-// Ensure a corresponding employee record exists in the employee table
-$sql = "SELECT * FROM employee WHERE EmployeeID = ?";
-$stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$result = $stmt->get_result();
+// Fetch user's leave balances
+$balance_sql = "SELECT lb.leave_type, lb.remaining_days, lt.LeaveName 
+                FROM leave_balances lb
+                JOIN leavetypes lt ON lb.leave_type = lt.LeaveTypeID
+                WHERE lb.user_id = ?";
+$stmt_balance = $conn->prepare($balance_sql);
+$stmt_balance->bind_param("i", $user_id);
+$stmt_balance->execute();
+$result_balance = $stmt_balance->get_result();
 
-if ($result->num_rows == 0) {
-    // No employee record exists, so create one using data from the users table
-    $userQuery = "SELECT name, email FROM users WHERE id = ?";
-    $stmtUser = $conn->prepare($userQuery);
-    $stmtUser->bind_param("i", $user_id);
-    $stmtUser->execute();
-    $userResult = $stmtUser->get_result();
-    $userData = $userResult->fetch_assoc();
-    $stmtUser->close();
-
-    // Insert a new employee record.
-    // Using exact column names: EmployeeID, name, email, position, department, Hire_Date.
-    $insertEmp = "INSERT INTO employee (EmployeeID, name, email, position, department, Hire_Date) 
-                  VALUES (?, ?, ?, '', '', NOW())";
-    $stmtInsert = $conn->prepare($insertEmp);
-    $stmtInsert->bind_param("iss", $user_id, $userData['name'], $userData['email']);
-    if (!$stmtInsert->execute()) {
-        echo "Error creating employee record: " . $stmtInsert->error;
-        exit();
-    }
-    $stmtInsert->close();
+$leaveBalances = [];
+while ($row = $result_balance->fetch_assoc()) {
+    $leaveBalances[$row['leave_type']] = [
+        'name' => $row['LeaveName'],
+        'days' => $row['remaining_days']
+    ];
 }
-$stmt->close();
+$stmt_balance->close();
 
-// Retrieve the employee record to get the position and department
-$sql_emp = "SELECT * FROM employee WHERE EmployeeID = ?";
-$stmt_emp = $conn->prepare($sql_emp);
-$stmt_emp->bind_param("i", $user_id);
-$stmt_emp->execute();
-$result_emp = $stmt_emp->get_result();
-$employee = $result_emp->fetch_assoc();
-$stmt_emp->close();
-
-// Process the apply leave form
+// Process leave application
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Get form data using null coalescing operators
-    $leave_type     = $_POST['leave_type'] ?? '';
-    $start_date     = $_POST['start_date'] ?? '';
-    $end_date       = $_POST['end_date'] ?? '';
-    $days_requested = $_POST['days_requested'] ?? '';
-    $status         = 'Pending'; // Default status for new leave requests
+    $leave_type = $_POST['leave_type'] ?? '';
+    $start_date = $_POST['start_date'] ?? '';
+    $end_date = $_POST['end_date'] ?? '';
+    $days_requested = $_POST['days_requested'] ?? 0;
+    $status = 'Pending';
 
-    // Simple validation
-    if (empty($leave_type) || empty($start_date) || empty($end_date) || empty($days_requested)) {
-        $error_message = "Please fill in all the fields.";
+    // Validate inputs
+    if (empty($leave_type) || empty($start_date) || empty($end_date) || $days_requested <= 0) {
+        $error_message = "Please fill in all fields correctly.";
+    } elseif (!isset($leaveBalances[$leave_type])) {
+        $error_message = "Invalid leave type selected.";
+    } elseif ($days_requested > $leaveBalances[$leave_type]['days']) {
+        $error_message = "Insufficient leave balance. You only have " . $leaveBalances[$leave_type]['days'] . " days left.";
+    } elseif (strtotime($end_date) < strtotime($start_date)) {
+        $error_message = "End date cannot be before the start date.";
     } else {
-        // -----------------------------
-        // Overlapping Leave Validation
-        // -----------------------------
-        // Overlap condition: existing StartDate <= new EndDate AND existing EndDate >= new StartDate.
-        $overlap_sql = "SELECT COUNT(*) AS overlap_count 
-                        FROM leaverequest 
-                        WHERE Status IN ('Approved', 'Pending') 
-                          AND (StartDate <= ? AND EndDate >= ?)";
-        $stmt_overlap = $conn->prepare($overlap_sql);
-        $stmt_overlap->bind_param("ss", $end_date, $start_date);
-        $stmt_overlap->execute();
-        $result_overlap = $stmt_overlap->get_result();
-        $overlap_data = $result_overlap->fetch_assoc();
-        $overlap_count = (int)$overlap_data['overlap_count'];
-        $stmt_overlap->close();
-        
-        $overlap_threshold = 3;
-        if ($overlap_count >= $overlap_threshold) {
-            // Notify HR via email
-            $hr_email = 'admin@gmail.com'; 
-            $subject = "Overlapping Leave Request Automatically Rejected";
-            $headers = "From: noreply@yourcompany.com\r\n" .
-                       "Reply-To: noreply@yourcompany.com\r\n" .
-                       "X-Mailer: PHP/" . phpversion();
-            $warning_message = "Warning: Leave request from user ID $user_id, scheduled from $start_date to $end_date, overlaps with $overlap_count other leave requests. This submission was automatically rejected.";
-            mail($hr_email, $subject, $warning_message, $headers);
-            
-            // Insert a notification for the employee
-            $notification_sql = "INSERT INTO notifications (user_id, message) VALUES (?, ?)";
-            $stmt_notification = $conn->prepare($notification_sql);
-            $notification_message = "Your leave request for $start_date to $end_date was automatically rejected due to overlapping with $overlap_count other leave requests. Please try again with a different date range.";
-            $stmt_notification->bind_param("is", $user_id, $notification_message);
-            $stmt_notification->execute();
-            $stmt_notification->close();
-            
-            $error_message = "Your leave request was automatically rejected due to overlapping leave requests. Please try again with a different date range.";
+        // Insert leave request
+        $sql = "INSERT INTO leaverequest (EmployeeID, leave_type, StartDate, EndDate, days_requested, Status) 
+                VALUES (?, ?, ?, ?, ?, ?)";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("isssis", $user_id, $leave_type, $start_date, $end_date, $days_requested, $status);
+        if ($stmt->execute()) {
+            $error_message = "Leave request submitted successfully.";
         } else {
-            // Insert the leave request
-            $sql = "INSERT INTO leaverequest (EmployeeID, leave_type, StartDate, EndDate, days_requested, Status) 
-                    VALUES (?, ?, ?, ?, ?, ?)";
-            $stmt = $conn->prepare($sql);
-            if (!$stmt) {
-                $error_message = "Prepare failed: " . $conn->error;
-            } else {
-                $stmt->bind_param("isssis", $user_id, $leave_type, $start_date, $end_date, $days_requested, $status);
-                if ($stmt->execute()) {
-                    $error_message = "Leave request submitted successfully!";
-                } else {
-                    $error_message = "Error: " . $stmt->error;
-                }
-                $stmt->close();
-            }
+            $error_message = "Error: " . $stmt->error;
         }
+        $stmt->close();
     }
 }
-
-// Retrieve available leave options for this employee from the leave_policy table.
-// This query fetches both specific policies (matching employee's position and department)
-// and includes additional leave types by using an IN clause.
-$policy_sql = "SELECT leave_type, allowed_days 
-               FROM leave_policy 
-               WHERE (position = ? AND department = ?)
-                  OR leave_type IN ('Maternity Leave', 'Paternity Leave', 'Emergency Leave', 'Bereavement Leave', 'Special Privilege Leave', 'Study Leave', 'Leave Without Pay', 'Compensatory Leave')";
-$stmt_policy = $conn->prepare($policy_sql);
-$stmt_policy->bind_param("ss", $employee['position'], $employee['department']);
-$stmt_policy->execute();
-$result_policy = $stmt_policy->get_result();
-$leaveOptions = [];
-while ($row = $result_policy->fetch_assoc()) {
-    $leaveOptions[] = $row;
-}
-$stmt_policy->close();
 ?>
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apply for Leave</title>
-    <link rel="stylesheet" href="css.css">
-    <style>
-        .form-container {
-            width: 30%;
-            margin: 40px auto;
-            background: #fff;
-            padding: 20px;
-            border-radius: 6px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    <link href="bootstrap1.css" rel="stylesheet">
+    
+    <script>
+        // Automatically calculate days requested based on start and end dates
+        function calculateDays() {
+            const startDate = new Date(document.getElementById('start_date').value);
+            const endDate = new Date(document.getElementById('end_date').value);
+            if (startDate && endDate && startDate <= endDate) {
+                const timeDiff = endDate - startDate;
+                const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24)) + 1; // Include both start and end dates
+                document.getElementById('days_requested').value = daysDiff;
+            } else {
+                document.getElementById('days_requested').value = 0;
+            }
         }
-        .error-message {
-            text-align: center;
-            color: red;
-            margin-bottom: 10px;
-        }
-        .success-message {
-            text-align: center;
-            color: green;
-            margin-bottom: 10px;
-        }
-    </style>
+    </script>
 </head>
 <body>
-    <header>
-        <h1>Dashboard</h1>
-    </header>
-    <nav>
-        <ul>
-            <li><a href="user.php">Home</a></li>
-            <li><a href="leavehistory.php">Leave History</a></li>
-            <li><a href="userprofile.php">Profile</a></li>
-            <li><a href="logout.php">Logout</a></li>
-        </ul>
-    </nav>
-    <div class="form-container">
-        <h2>Apply for Leave</h2>
-        <?php 
-            if (!empty($error_message)) {
-                if (strpos($error_message, "submitted successfully") !== false) {
-                    echo "<p class='success-message'>" . htmlspecialchars($error_message) . "</p>";
-                } else {
-                    echo "<p class='error-message'>" . htmlspecialchars($error_message) . "</p>";
-                }
-            }
-        ?>
-        <form method="POST">
-            <label for="leave_type">Leave Type:</label>
-            <select id="leave_type" name="leave_type" required>
-                <option value="">-- Select Leave Type --</option>
-                <?php foreach ($leaveOptions as $option) { ?>
-                    <option value="<?php echo htmlspecialchars($option['leave_type']); ?>">
-                        <?php echo htmlspecialchars($option['leave_type']); ?> (<?php echo htmlspecialchars($option['allowed_days']); ?> days)
-                    </option>
-                <?php } ?>
-            </select>
-            <br><br>
-            
-            <label for="start_date">Start Date:</label>
-            <input type="date" id="start_date" name="start_date" required>
-            <br><br>
-            
-            <label for="end_date">End Date:</label>
-            <input type="date" id="end_date" name="end_date" required>
-            <br><br>
-            
-            <label for="days_requested">Number of Days Requested:</label>
-            <input type="number" id="days_requested" name="days_requested" min="1" required>
-            <br><br>
-            
-            <button type="submit">Apply</button>
-        </form>
+    <div class="d-flex">
+        <!-- Sidebar (unchanged) -->
+        <nav class="bg-dark text-white p-3 vh-100" style="width: 250px;">
+            <h2 class="h5">Apply Leave</h2>
+            <ul class="nav flex-column">
+                <li class="nav-item"><a href="user.php" class="nav-link text-white">Dashboard</a></li>
+                <li class="nav-item"><a href="leavehistory.php" class="nav-link text-white">Leave History</a></li>
+                <li class="nav-item"><a href="userprofile.php" class="nav-link text-white">Profile</a></li>
+                <li class="nav-item"><a href="notifications.php" class="nav-link text-white">Notifications</a></li>
+                <li class="nav-item"><a href="logout.php" class="nav-link text-danger">Logout</a></li>
+            </ul>
+        </nav>
+        
+        <!-- Content -->
+        <div class="container p-4">
+            <h2>Apply for Leave</h2>
+            <?php if ($error_message): ?>
+                <div class="alert <?php echo strpos($error_message, 'successfully') !== false ? 'alert-success' : 'alert-danger'; ?>">
+                    <?php echo htmlspecialchars($error_message); ?>
+                </div>
+            <?php endif; ?>
+            <form method="POST">
+                <div class="mb-3">
+                    <label for="leave_type" class="form-label">Leave Type:</label>
+                    <select id="leave_type" name="leave_type" class="form-select" required>
+                        <option value="">-- Select Leave Type --</option>
+                        <?php foreach ($leaveBalances as $type => $data) { ?>
+                            <option value="<?php echo htmlspecialchars($type); ?>">
+                                <?php echo htmlspecialchars($data['name']); ?> (<?php echo $data['days']; ?> days left)
+                            </option>
+                        <?php } ?>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label for="start_date" class="form-label">Start Date:</label>
+                    <input type="date" id="start_date" name="start_date" class="form-control" required onchange="calculateDays()">
+                </div>
+                <div class="mb-3">
+                    <label for="end_date" class="form-label">End Date:</label>
+                    <input type="date" id="end_date" name="end_date" class="form-control" required onchange="calculateDays()">
+                </div>
+                <div class="mb-3">
+                    <label for="days_requested" class="form-label">Days Requested:</label>
+                    <input type="number" id="days_requested" name="days_requested" class="form-control" min="1" required readonly>
+                    <small class="text-muted">Days are calculated automatically based on the start and end dates.</small>
+                </div>
+                <button type="submit" class="btn btn-primary">Apply</button>
+            </form>
+        </div>
     </div>
+    <script src="bootstrap.bundle.min.js"></script>
 </body>
 </html>

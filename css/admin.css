@@ -1,4 +1,3 @@
-/* General Styles */
 body {
     font-family: Arial, sans-serif;
     margin: 0;
@@ -6,7 +5,6 @@ body {
     background-color: #f4f4f4;
 }
 
-/* Sidebar Styles */
 .sidebar {
     width: 250px;
     height: 100vh;
@@ -102,7 +100,7 @@ td a:hover {
 
 /* Forms */
 form {
-    width: 50%;
+    width: 80%;
     margin: 20px auto;
     padding: 20px;
     background: #fff;
